@@ -1,0 +1,42 @@
+# --- Manipulación de datos y cálculo numérico ---
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+
+# --- Datos financieros ---
+yfinance>=0.2.40
+pandas-datareader>=0.10
+
+# --- Indicadores técnicos / features ---
+ta>=0.11
+
+# --- Modelos estadísticos de series de tiempo (baselines) ---
+statsmodels>=0.14
+
+# --- Machine learning clásico y preprocesamiento ---
+scikit-learn>=1.3
+
+# --- Redes neuronales (LSTM, GRU, CNN, Transformers) ---
+tensorflow>=2.15
+keras>=3.0
+
+# --- Visualización del entrenamiento ---
+tensorboard>=2.15
+
+# --- Tracking de experimentos y registro de modelos ---
+mlflow>=2.12
+
+# --- Visualización ---
+matplotlib>=3.8
+seaborn>=0.13
+plotly>=5.18
+
+# --- Utilidades ---
+python-dotenv>=1.0
+pyyaml>=6.0
+tqdm>=4.66
+joblib>=1.3
+
+# --- Notebooks ---
+jupyterlab>=4.0
+ipykernel>=6.25

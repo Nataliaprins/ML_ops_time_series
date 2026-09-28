@@ -1,0 +1,57 @@
+# Parámetros del proyecto de pronóstico de volatilidad diaria.
+# Todos los scripts de src/ leen este archivo; cambia aquí y vuelve a correr `make all`.
+
+data:
+  ticker: AAPL
+  start: "2010-01-01"
+  end: "2025-12-31"          # fecha fija para que los resultados sean reproducibles
+
+features:
+  # Estimador de volatilidad diaria a partir de OHLC:
+  #   garman_klass | parkinson
+  estimator: garman_klass
+  log_transform: true        # los modelos se entrenan sobre log(vol); las métricas se reportan en escala original
+
+split:
+  test_size: 0.2             # último 20% de la serie: hold-out que nunca ve el grid search
+
+cv:
+  n_splits: 4                # TimeSeriesSplit (ventana expansiva)
+  gap: 5                     # días descartados entre train y validación en cada fold
+
+seed: 42
+
+mlflow:
+  tracking_uri: sqlite:///mlflow.db
+  experiment: aapl_volatility
+
+tensorboard:
+  log_dir: logs/tensorboard
+
+arima:
+  # Búsqueda de orden (p, d, q) por AIC sobre el conjunto de entrenamiento
+  p: [0, 1, 2, 3]
+  d: [0, 1]
+  q: [0, 1, 2, 3]
+
+training:
+  epochs: 100
+  batch_size: 32
+  patience: 10               # early stopping sobre el último 10% del train (validation_split)
+  validation_split: 0.1
+
+lstm:
+  grid:
+    lookback: [20, 40]
+    units: [32, 64]
+    dropout: [0.0, 0.2]
+    learning_rate: [0.001]
+
+cnn2d:
+  # La ventana se reorganiza como imagen (semanas x 5 días hábiles),
+  # por eso lookback debe ser múltiplo de 5.
+  grid:
+    lookback: [20, 40]
+    filters: [16, 32]
+    kernel_size: [2, 3]
+    learning_rate: [0.001]

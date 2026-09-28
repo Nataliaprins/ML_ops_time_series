@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Proyecto: artefactos generados (se reproducen con `make all`) ---
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+models/*
+reports/figures/*
+reports/*.csv
+!**/.gitkeep
+mlruns/
+mlartifacts/
+mlflow.db
+logs/
