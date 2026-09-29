@@ -3,11 +3,16 @@ import mlflow
 import numpy as np
 import pandas as pd
 
-from src.config import PROCESSED_FILE, ROOT
+from src.config import ROOT, processed_file, ticker_slug
 
 
-def load_series() -> pd.Series:
-    return pd.read_csv(PROCESSED_FILE, index_col="date", parse_dates=True)["volatility"]
+def load_series(ticker: str) -> pd.Series:
+    return pd.read_csv(processed_file(ticker), index_col="date", parse_dates=True)["volatility"]
+
+
+def registered_model_name(ticker: str, model_type: str) -> str:
+    """Nombre en el Model Registry, uno por activo y modelo: 'msft_vol_lstm'."""
+    return f"{ticker_slug(ticker).lower()}_vol_{model_type}"
 
 
 def train_test_split_series(series: pd.Series, test_size: float) -> tuple[pd.Series, pd.Series]:

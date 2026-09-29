@@ -3,7 +3,12 @@
 En test se pronostica un paso adelante: para predecir el día t se usan los
 parámetros estimados en train y los valores observados hasta t-1, igual que
 las redes neuronales con su ventana de lookback.
+
+Uso:
+    python -m src.models.train_arima                 # todos los tickers de params.yaml
+    python -m src.models.train_arima --ticker MSFT   # solo uno
 """
+import argparse
 import itertools
 import logging
 import warnings
@@ -13,9 +18,10 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
 
-from src.config import MODELS_DIR, REPORTS_DIR, load_params
+from src.config import get_tickers, load_params, models_dir, reports_dir
 from src.models.common import (
     load_series,
+    registered_model_name,
     regression_metrics,
     setup_mlflow,
     to_model_scale,
@@ -43,20 +49,18 @@ def select_order(y_train: np.ndarray, grid: dict):
     return best_order, best_res
 
 
-def main():
-    params = load_params()
+def train_ticker(ticker: str, params: dict):
     log_t = params["features"]["log_transform"]
-    series = load_series()
+    series = load_series(ticker)
     train, test = train_test_split_series(series, params["split"]["test_size"])
 
     y_train = to_model_scale(train.values, log_t)
     y_full = to_model_scale(series.values, log_t)
 
-    setup_mlflow(params)
-    with mlflow.start_run(run_name=f"{MODEL_NAME}_final"):
-        mlflow.set_tags({"model_type": MODEL_NAME, "run_type": "final"})
+    with mlflow.start_run(run_name=f"{ticker}_{MODEL_NAME}_final"):
+        mlflow.set_tags({"ticker": ticker, "model_type": MODEL_NAME, "run_type": "final"})
         order, res = select_order(y_train, params["arima"])
-        logger.info("Mejor orden: ARIMA%s", order)
+        logger.info("%s mejor orden: ARIMA%s", ticker, order)
 
         # Filtra la serie completa con los parámetros fijos de train (sin re-estimar)
         # y toma las predicciones un paso adelante sobre el tramo de test.
@@ -69,17 +73,30 @@ def main():
         mlflow.log_metrics({f"test_{k}": v for k, v in metrics.items()})
 
         preds = pd.DataFrame({"y_true": test.values, "y_pred": y_pred}, index=test.index)
-        REPORTS_DIR.mkdir(exist_ok=True)
-        out = REPORTS_DIR / f"predictions_{MODEL_NAME}.csv"
+        rep_dir = reports_dir(ticker)
+        rep_dir.mkdir(parents=True, exist_ok=True)
+        out = rep_dir / f"predictions_{MODEL_NAME}.csv"
         preds.to_csv(out)
         mlflow.log_artifact(str(out))
 
-        MODELS_DIR.mkdir(exist_ok=True)
-        res.save(MODELS_DIR / f"{MODEL_NAME}.pkl")
-        mlflow.statsmodels.log_model(res, name="model", registered_model_name=f"aapl_vol_{MODEL_NAME}")
-        logger.info("ARIMA%s test: %s", order, metrics)
+        mod_dir = models_dir(ticker)
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        res.save(mod_dir / f"{MODEL_NAME}.pkl")
+        mlflow.statsmodels.log_model(
+            res, name="model", registered_model_name=registered_model_name(ticker, MODEL_NAME)
+        )
+        logger.info("%s ARIMA%s test: %s", ticker, order, metrics)
+
+
+def main(only: list[str] | None = None):
+    params = load_params()
+    setup_mlflow(params)
+    for ticker in get_tickers(params, only):
+        train_ticker(ticker, params)
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ticker", action="append", help="Entrena solo este ticker (repetible)")
+    main(parser.parse_args().ticker)

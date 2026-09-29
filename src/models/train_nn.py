@@ -11,6 +11,7 @@ Flujo:
 Uso:
     python -m src.models.train_nn --model lstm
     python -m src.models.train_nn --model cnn2d
+    python -m src.models.train_nn --model lstm --ticker MSFT   # solo un activo
 """
 import argparse
 import logging
@@ -22,9 +23,10 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import ParameterGrid
 
-from src.config import MODELS_DIR, REPORTS_DIR, ROOT, load_params
+from src.config import ROOT, get_tickers, load_params, models_dir, reports_dir, ticker_slug
 from src.models.common import (
     load_series,
+    registered_model_name,
     regression_metrics,
     setup_mlflow,
     to_model_scale,
@@ -66,7 +68,7 @@ def fit_and_evaluate(model_type: str, hparams: dict, fold: Fold, train_cfg: dict
     return model, regression_metrics(y_true, y_pred), y_true, y_pred
 
 
-def grid_search(model_type: str, y_train: np.ndarray, params: dict, tb_root) -> dict:
+def grid_search(ticker: str, model_type: str, y_train: np.ndarray, params: dict, tb_root) -> dict:
     grid = ParameterGrid(params[model_type]["grid"])
     log_t = params["features"]["log_transform"]
     best = {"cv_mse": np.inf, "hparams": None}
@@ -74,7 +76,7 @@ def grid_search(model_type: str, y_train: np.ndarray, params: dict, tb_root) -> 
     for hparams in grid:
         cid = config_id(hparams)
         with mlflow.start_run(run_name=cid, nested=True):
-            mlflow.set_tags({"model_type": model_type, "run_type": "cv"})
+            mlflow.set_tags({"ticker": ticker, "model_type": model_type, "run_type": "cv"})
             mlflow.log_params(hparams)
             fold_metrics = []
             folds = time_series_folds(y_train, hparams["lookback"], params["cv"]["n_splits"], params["cv"]["gap"])
@@ -88,31 +90,30 @@ def grid_search(model_type: str, y_train: np.ndarray, params: dict, tb_root) -> 
             cv_mse = float(np.mean([m["mse"] for m in fold_metrics]))
             cv_rmse = float(np.mean([m["rmse"] for m in fold_metrics]))
             mlflow.log_metrics({"cv_mse": cv_mse, "cv_rmse": cv_rmse})
-            logger.info("%s %s -> CV MSE=%.4f RMSE=%.4f", model_type, cid, cv_mse, cv_rmse)
+            logger.info("%s %s %s -> CV MSE=%.4f RMSE=%.4f", ticker, model_type, cid, cv_mse, cv_rmse)
 
             if cv_mse < best["cv_mse"]:
                 best = {"cv_mse": cv_mse, "cv_rmse": cv_rmse, "hparams": hparams}
     return best
 
 
-def main(model_type: str):
-    params = load_params()
+def train_ticker(ticker: str, model_type: str, params: dict):
+    # La semilla se fija por activo: el resultado de un ticker no depende de si se entrenó solo o junto a otros.
     keras.utils.set_random_seed(params["seed"])
     log_t = params["features"]["log_transform"]
 
-    series = load_series()
+    series = load_series(ticker)
     train, test = train_test_split_series(series, params["split"]["test_size"])
     y_train = to_model_scale(train.values, log_t)
     y_full = to_model_scale(series.values, log_t)
 
-    tb_root = ROOT / params["tensorboard"]["log_dir"] / model_type
+    tb_root = ROOT / params["tensorboard"]["log_dir"] / ticker_slug(ticker) / model_type
     shutil.rmtree(tb_root, ignore_errors=True)  # evita mezclar curvas de ejecuciones anteriores
 
-    setup_mlflow(params)
-    with mlflow.start_run(run_name=f"{model_type}_final"):
-        mlflow.set_tags({"model_type": model_type, "run_type": "final"})
-        best = grid_search(model_type, y_train, params, tb_root)
-        logger.info("Mejores hiperparámetros %s: %s", model_type, best["hparams"])
+    with mlflow.start_run(run_name=f"{ticker}_{model_type}_final"):
+        mlflow.set_tags({"ticker": ticker, "model_type": model_type, "run_type": "final"})
+        best = grid_search(ticker, model_type, y_train, params, tb_root)
+        logger.info("%s mejores hiperparámetros %s: %s", ticker, model_type, best["hparams"])
         mlflow.log_params(best["hparams"])
         mlflow.log_metrics({"cv_mse": best["cv_mse"], "cv_rmse": best["cv_rmse"]})
 
@@ -124,22 +125,35 @@ def main(model_type: str):
             model_type, best["hparams"], final_fold, params["training"], log_t, tb_root / "final"
         )
         mlflow.log_metrics({f"test_{k}": v for k, v in metrics.items()})
-        logger.info("%s test: %s", model_type, metrics)
+        logger.info("%s %s test: %s", ticker, model_type, metrics)
 
         preds = pd.DataFrame({"y_true": y_true, "y_pred": y_pred}, index=test.index)
-        REPORTS_DIR.mkdir(exist_ok=True)
-        pred_file = REPORTS_DIR / f"predictions_{model_type}.csv"
+        rep_dir = reports_dir(ticker)
+        rep_dir.mkdir(parents=True, exist_ok=True)
+        pred_file = rep_dir / f"predictions_{model_type}.csv"
         preds.to_csv(pred_file)
         mlflow.log_artifact(str(pred_file))
         mlflow.log_artifacts(str(tb_root / "final"), artifact_path="tensorboard")
 
-        MODELS_DIR.mkdir(exist_ok=True)
-        model.save(MODELS_DIR / f"{model_type}.keras")
-        mlflow.tensorflow.log_model(model, name="model", registered_model_name=f"aapl_vol_{model_type}")
+        mod_dir = models_dir(ticker)
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        model.save(mod_dir / f"{model_type}.keras")
+        mlflow.tensorflow.log_model(
+            model, name="model", registered_model_name=registered_model_name(ticker, model_type)
+        )
+
+
+def main(model_type: str, only: list[str] | None = None):
+    params = load_params()
+    setup_mlflow(params)
+    for ticker in get_tickers(params, only):
+        train_ticker(ticker, model_type, params)
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=["lstm", "cnn2d"], required=True)
-    main(parser.parse_args().model)
+    parser.add_argument("--ticker", action="append", help="Entrena solo este ticker (repetible)")
+    args = parser.parse_args()
+    main(args.model, args.ticker)

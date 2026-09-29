@@ -225,6 +225,8 @@ data/external/*
 models/*
 reports/figures/*
 reports/*.csv
+reports/*/
+!reports/figures/
 !**/.gitkeep
 mlruns/
 mlartifacts/
